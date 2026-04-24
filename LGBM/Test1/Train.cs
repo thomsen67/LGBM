@@ -43,28 +43,6 @@ public class Train
         }
         var dataView = mlContext.Data.LoadFromEnumerable(list);
 
-        //// 2. The Correct Pipeline
-        //var pipeline = mlContext.Transforms.Conversion
-        //    // Step A: Map to Key (this creates the categorical metadata)
-        //    .MapValueToKey(nameof(RawData.Feature2))
-        //    // Step B: Convert Key to Float (this makes it compatible with Concatenate)
-        //    // ML.NET preserves the "Key" metadata during this specific conversion!
-        //    .Append(mlContext.Transforms.Conversion.ConvertType(nameof(RawData.Feature2), outputKind: DataKind.Single))
-        //    // Step C: Concatenate all floats into one vector
-        //    .Append(mlContext.Transforms.Concatenate("Features",
-        //        nameof(RawData.Feature0),
-        //        nameof(RawData.Feature1),
-        //        nameof(RawData.Feature2)))
-        //    // Step D: Train LightGBM
-        //    .Append(mlContext.BinaryClassification.Trainers.LightGbm(new LightGbmBinaryTrainer.Options
-        //    {
-        //        NumberOfIterations = 10,
-        //        NumberOfLeaves = 8,
-        //        UseCategoricalSplit = true,
-        //        FeatureColumnName = "Features",
-        //        LabelColumnName = nameof(RawData.Label)
-        //    }));
-
         var pipeline =
     mlContext.Transforms.Conversion.MapValueToKey("Feature2Key", nameof(RawData.Feature2))
     .Append(mlContext.Transforms.Conversion.MapKeyToValue("Feature2Float", "Feature2Key"))
@@ -84,10 +62,45 @@ public class Train
         // 3. Train
         var model = pipeline.Fit(dataView);
 
+        mlContext.Model.Save(model, dataView.Schema, @"c:\Thomas\Desktop\gekko\testing\DREAM\LGBM_TTH_Repo\lgbm.zip");
+
         // 4. Save to lgbm.txt
         // We use this logic to drill past the 'Calibrator' wrapper ML.NET adds
         var transformer = model.LastTransformer as ISingleFeaturePredictionTransformer<object>;
         var lgbmParams = transformer.Model as LightGbmBinaryModelParameters;
+
+        
+        // model = output of pipeline.Fit(...)
+        var predictionEngine = mlContext.Model.CreatePredictionEngine<RawData, Prediction>(model);
+
+        var sample = new RawData
+        {
+            Feature0 = 0.5f,
+            Feature1 = 0.2f,
+            Feature2 = 3 // categorical value (same domain as training!)
+        };
+
+        var result = predictionEngine.Predict(sample);
+
+        if (true)
+        {
+            //Faster: running in parallel
+            var testData = mlContext.Data.LoadFromEnumerable(new[]
+{
+    new RawData { Feature0 = 0.1f, Feature1 = 0.2f, Feature2 = 1 },
+    new RawData { Feature0 = 0.4f, Feature1 = 0.6f, Feature2 = 3 }
+});
+
+            var predictions = model.Transform(testData);
+
+            var results = mlContext.Data.CreateEnumerable<Prediction>(predictions, reuseRowObject: false);
+
+            foreach (var p in results)
+            {
+                Console.WriteLine(p.PredictedLabel);
+            }
+        }
+
 
     }
 }
