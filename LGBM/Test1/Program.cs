@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Microsoft.ML;
 using Microsoft.ML.Data;
+using Microsoft.ML.Trainers.LightGbm;
 
 public class IrisInput
 {
@@ -24,6 +25,8 @@ class Program
 {
     static void Main(string[] args)
     {
+        Program2.Xxx(); return;
+        
         // 1) Create ML context
         var mlContext = new MLContext();
 
@@ -91,5 +94,57 @@ class Program
         {
             Console.WriteLine($"Class {i}: {prediction.Score[i]:F4}");
         }
+    }
+}
+
+public class Program2
+{
+    public static void Xxx()
+    {
+        var mlContext = new MLContext();
+
+        // 1. Empty data WITH correct schema matching the features below
+        var emptyData = mlContext.Data.LoadFromEnumerable(new List<IrisInput>());
+
+        // 2. Build full pipeline: Concatenate + pretrained LightGBM
+        var modelPath = @"c:\Thomas\Desktop\gekko\testing\DREAM\LightGBM\CSharp3\Test\iris.txt";
+
+        using var modelStream = File.OpenRead(modelPath);
+
+        var pipeline = mlContext.Transforms.Concatenate(
+                "Features",
+                nameof(IrisInput.SepalLength),
+                nameof(IrisInput.SepalWidth),
+                nameof(IrisInput.PetalLength),
+                nameof(IrisInput.PetalWidth)
+            )
+            .Append(mlContext.MulticlassClassification.Trainers
+                .LightGbm(modelStream, featureColumnName: "Features"));
+
+        // 3. Fit (loads pretrained weights, no actual training)
+        var fittedModel = pipeline.Fit(emptyData);
+
+        // 4. Save as .zip — schema comes from emptyData, model from fittedModel
+        var savePath = @"c:\Thomas\Desktop\gekko\testing\DREAM\LightGBM\CSharp3\Test\iris.zip";
+        mlContext.Model.Save(fittedModel, emptyData.Schema, savePath);
+
+        Console.WriteLine($"Model saved to {savePath}");
+
+        // 5. Verify: reload and predict
+        var loadedModel = mlContext.Model.Load(savePath, out var schema);
+        var predEngine = mlContext.Model
+            .CreatePredictionEngine<IrisInput, IrisPrediction>(loadedModel);
+
+        var result = predEngine.Predict(new IrisInput
+        {
+            SepalLength = 5.1f,
+            SepalWidth = 3.5f,
+            PetalLength = 1.4f,
+            PetalWidth = 0.2f
+        });
+
+        Console.WriteLine("Scores: " + string.Join(", ",
+            Array.ConvertAll(result.Score, s => s.ToString("F4"))));
+
     }
 }
