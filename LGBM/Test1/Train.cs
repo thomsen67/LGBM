@@ -28,6 +28,11 @@ public class Train
     {
         var mlContext = new MLContext(seed: 42);
         var rng = new Random(42);
+        // optional: force console logging
+        mlContext.Log += (o, e) =>
+        {
+            Console.WriteLine(e.Message);
+        };
 
         // 1. Generate Synthetic Data
         var list = new List<RawData>();
@@ -56,7 +61,8 @@ public class Train
         LabelColumnName = nameof(RawData.Label),
         UseCategoricalSplit = true,
         NumberOfIterations = 10,
-        NumberOfLeaves = 8
+        NumberOfLeaves = 8,
+        //Verbose = true, not informative
     }));
 
         // 3. Train
@@ -100,6 +106,56 @@ public class Train
                 Console.WriteLine(p.PredictedLabel);
             }
         }
+
+        // ── 5. Evaluation statistics ─────────────────────────────────────────────────
+
+        // Use the full training data for in-sample metrics (or swap for a held-out test set)
+        var split = mlContext.Data.TrainTestSplit(dataView, testFraction: 0.2, seed: 42);
+        var trainSet = split.TrainSet;
+        var testSet = split.TestSet;
+
+        // Re-fit on train split only, evaluate on test split
+        var modelForEval = pipeline.Fit(trainSet);
+        var evaluated = modelForEval.Transform(testSet);
+
+        var metrics = mlContext.BinaryClassification.Evaluate(
+            evaluated,
+            labelColumnName: nameof(RawData.Label));
+
+        Console.WriteLine("\n── Binary Classification Metrics ──────────────────");
+        Console.WriteLine($"  Accuracy                : {metrics.Accuracy:F4}");
+        Console.WriteLine($"  AUC (ROC)               : {metrics.AreaUnderRocCurve:F4}");
+        Console.WriteLine($"  AUC (Precision-Recall)  : {metrics.AreaUnderPrecisionRecallCurve:F4}");
+        Console.WriteLine($"  F1 Score                : {metrics.F1Score:F4}");
+        Console.WriteLine($"  Precision               : {metrics.PositivePrecision:F4}");
+        Console.WriteLine($"  Recall                  : {metrics.PositiveRecall:F4}");
+        Console.WriteLine($"  Negative Precision      : {metrics.NegativePrecision:F4}");
+        Console.WriteLine($"  Negative Recall         : {metrics.NegativeRecall:F4}");
+        Console.WriteLine($"  Log Loss                : {metrics.LogLoss:F4}");
+        Console.WriteLine($"  Log Loss Reduction      : {metrics.LogLossReduction:F4}");
+
+        Console.WriteLine("\n── Confusion Matrix ────────────────────────────────");
+        var cm = metrics.ConfusionMatrix;
+        Console.WriteLine($"  True  Positives  : {cm.GetFormattedConfusionTable()}");
+        Console.WriteLine(cm.GetFormattedConfusionTable());
+
+        // ── 6. Feature importance ─────────────────────────────────────────────────────
+        // Drill through the calibrator wrapper to get the LightGBM model
+        var lastTransformer = modelForEval.LastTransformer
+            as ISingleFeaturePredictionTransformer<object>;
+        var lgbmModel = lastTransformer?.Model as LightGbmBinaryModelParameters;
+
+        //if (lgbmModel != null)
+        //{
+        //    var gains = lgbmModel.GetFeatureWeights(normalizeWeights: true);
+
+        //    // Feature names in the same order as Concatenate("Features", ...)
+        //    var featureNames = new[] { "Feature0", "Feature1", "Feature2Float" };
+
+        //    Console.WriteLine("\n── Feature Importance (normalized gain) ────────────");
+        //    for (int i = 0; i < gains.Length && i < featureNames.Length; i++)
+        //        Console.WriteLine($"  {featureNames[i],-20}: {gains[i]:F4}");
+        //}
 
 
     }
