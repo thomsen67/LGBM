@@ -2,8 +2,9 @@
 using System.Collections.Generic;
 using System.IO;
 using Microsoft.ML;
-using Microsoft.ML.Data;
+//using Microsoft.ML.Data;
 using Microsoft.ML.Trainers.LightGbm;
+using LightGBMNet.Tree;
 
 public class IrisInput
 {
@@ -13,18 +14,11 @@ public class IrisInput
     public uint Column_2 { get; set; }
 }
 
-public class IrisPrediction
-{
-    // multiclass LightGBM outputs Score
-    [ColumnName("Score")]
-    public float[] Score { get; set; }
-}
-
 class Program
 {
     static void Main(string[] args)
     {
-        //Program2.Xxx(); return;
+        Program2.Xxx(); return;
         Train.Yyy();
     }
 }
@@ -33,48 +27,41 @@ public class Program2
 {
     public static void Xxx()
     {
-        var mlContext = new MLContext();
+        // 1. Load the model using Ensemble.Parse
+        // ReadLines is better than ReadAllLines for memory, 
+        // as Parse iterates through the lines.
+        (Ensemble ensemble, Parameters p, int i) = Ensemble.GetModelFromString(File.ReadAllText(@"c:\Thomas\Desktop\gekko\testing\DREAM\LGBM_TTH_Repo\adult_model.txt"));
 
-        // 1. Empty data WITH correct schema matching the features below
-        var emptyData = mlContext.Data.LoadFromEnumerable(new List<IrisInput>());
-
-        // 2. Build full pipeline: Concatenate + pretrained LightGBM
-        var modelPath = @"c:\Thomas\Desktop\gekko\testing\DREAM\LGBM_TTH_Repo\lgbm.txt";
-
-        using var modelStream = File.OpenRead(modelPath);
-
-        var pipeline = mlContext.Transforms.Concatenate(
-                "Features",
-                nameof(IrisInput.Column_0),
-                nameof(IrisInput.Column_1),
-                nameof(IrisInput.Column_2)
-            )
-            .Append(mlContext.MulticlassClassification.Trainers
-                .LightGbm(modelStream, featureColumnName: "Features"));
-
-        // 3. Fit (loads pretrained weights, no actual training)
-        var fittedModel = pipeline.Fit(emptyData);
-
-        // 4. Save as .zip — schema comes from emptyData, model from fittedModel
-        var savePath = @"c:\Thomas\Desktop\gekko\testing\DREAM\LGBM_TTH_Repo\lgbm.zip";
-        mlContext.Model.Save(fittedModel, emptyData.Schema, savePath);
-
-        Console.WriteLine($"Model saved to {savePath}");
-
-        // 5. Verify: reload and predict
-        var loadedModel = mlContext.Model.Load(savePath, out var schema);
-        var predEngine = mlContext.Model
-            .CreatePredictionEngine<IrisInput, IrisPrediction>(loadedModel);
-
-        var result = predEngine.Predict(new IrisInput
+        // 2. Prepare your input features (14 features based on your file)
+        // Must follow the order: age, workclass, fnlwgt, education, etc.
+        float[] inputFeatures = new float[]
         {
-            Column_0= 5.1f,
-            Column_1 = 3.5f,
-            Column_2 = 2
-        });
+            39f, 7f, 77516f, 9f, 13f, 4f, 1f, 1f, 4f, 1f, 2174f, 0f, 40f, 38f
+        };
 
-        Console.WriteLine("Scores: " + string.Join(", ",
-            Array.ConvertAll(result.Score, s => s.ToString("F4"))));
 
+
+        // 3. Wrap the array in a VBuffer
+        // VBuffer constructor: (length, array)
+        var vBuffer = new VBuffer<float>(inputFeatures.Length, inputFeatures);
+
+        // 4. Call GetOutput with the required signature
+        // startIteration: 0
+        // numIterations: ensemble.NumTrees (or the count of trees in the list)
+        int numTrees = ensemble.Trees.Count();// Count;
+        double rawScore = ensemble.GetOutput(ref vBuffer, 0, numTrees);
+
+        // 4. Since your file says "objective=binary sigmoid", 
+        // convert the logit to a probability.
+        double probability = Sigmoid(rawScore);
+
+        Console.WriteLine($"Raw Score: {rawScore}");
+        Console.WriteLine($"Probability: {probability:P2}");
+
+    }
+
+    private static double Sigmoid(double x)
+    {
+        return 1.0 / (1.0 + Math.Exp(-x));
     }
 }
