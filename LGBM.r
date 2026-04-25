@@ -1,59 +1,54 @@
-# Install if needed:
-# install.packages("lightgbm")
-# install.packages("dplyr")
-
 library(lightgbm)
-library(dplyr)
 
-
-# ── 1. Load data ──────────────────────────────────────────────────────────────
-url <- "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data"
-
+# ── 1. Load directly from UCI ─────────────────────────────────────────────────
 col_names <- c("age", "workclass", "fnlwgt", "education", "education_num",
                "marital_status", "occupation", "relationship", "race", "sex",
                "capital_gain", "capital_loss", "hours_per_week",
                "native_country", "income")
 
-df <- read.csv(url, header = FALSE, col.names = col_names,
-               strip.white = TRUE, na.strings = "?")
+df <- read.csv(
+  "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data",
+  header      = FALSE,
+  col.names   = col_names,
+  strip.white = TRUE,
+  na.strings  = "?"
+)
 
 # ── 2. Clean ──────────────────────────────────────────────────────────────────
 df <- na.omit(df)
-
-# Binary label: >50K = 1, <=50K = 0
 df$label <- as.integer(df$income == ">50K")
 
-# ── 3. Encode categoricals as integers ───────────────────────────────────────
+# ── 3. Encode categoricals as 0-based integers ────────────────────────────────
 cat_cols <- c("workclass", "education", "marital_status", "occupation",
               "relationship", "race", "sex", "native_country")
 
 for (col in cat_cols) {
-  df[[col]] <- as.integer(factor(df[[col]])) - 1L  # 0-based integer codes
+  df[[col]] <- as.integer(factor(df[[col]])) - 1L
 }
 
-# ── 4. Feature matrix ─────────────────────────────────────────────────────────
+# ── 4. Build feature matrix ───────────────────────────────────────────────────
 feature_cols <- c("age", "workclass", "fnlwgt", "education", "education_num",
                   "marital_status", "occupation", "relationship", "race", "sex",
                   "capital_gain", "capital_loss", "hours_per_week", "native_country")
 
 X <- as.matrix(df[, feature_cols])
+storage.mode(X) <- "double"
 y <- df$label
 
-# ── 5. Train / test split ─────────────────────────────────────────────────────
+# ── 5. Train/test split ───────────────────────────────────────────────────────
 set.seed(42)
-idx        <- sample(nrow(X), 0.8 * nrow(X))
-X_train    <- X[idx, ];   y_train <- y[idx]
-X_test     <- X[-idx, ];  y_test  <- y[-idx]
+idx     <- sample(nrow(X), 0.8 * nrow(X))
+X_train <- X[idx,  ];  y_train <- y[idx]
+X_test  <- X[-idx, ];  y_test  <- y[-idx]
 
-# ── 6. LightGBM datasets ──────────────────────────────────────────────────────
-# categorical_feature uses 0-based column indices within X
-cat_indices <- which(feature_cols %in% cat_cols) - 1L  # 0-based
-
-dtrain <- lgb.Dataset(X_train, label = y_train,
-                      categorical_feature = cat_indices)
-dtest  <- lgb.Dataset(X_test,  label = y_test,
-                      categorical_feature = cat_indices,
+# ── 6. Build datasets then explicitly set categoricals by NAME ────────────────
+dtrain <- lgb.Dataset(X_train, label = y_train, free_raw_data = FALSE)
+dtest  <- lgb.Dataset(X_test,  label = y_test,  free_raw_data = FALSE,
                       reference = dtrain)
+
+# This is the correct way — explicit by column name, no heuristics involved
+lgb.Dataset.set.categorical(dtrain, cat_cols)
+lgb.Dataset.set.categorical(dtest,  cat_cols)
 
 # ── 7. Parameters ─────────────────────────────────────────────────────────────
 params <- list(
@@ -67,34 +62,34 @@ params <- list(
   verbose          = -1
 )
 
-# ── 8. Train with early stopping ──────────────────────────────────────────────
+# ── 8. Train ──────────────────────────────────────────────────────────────────
 model <- lgb.train(
-  params            = params,
-  data              = dtrain,
-  nrounds           = 300,
-  valids            = list(train = dtrain, test = dtest),
+  params                = params,
+  data                  = dtrain,
+  nrounds               = 300,
+  valids                = list(train = dtrain, test = dtest),
   early_stopping_rounds = 20,
-  eval_freq         = 50
+  eval_freq             = 50
 )
 
-cat("\nBest iteration:", model$best_iter, "\n")
-cat("Best AUC (test):", model$best_score, "\n")
+cat(sprintf("\nBest iteration : %d\n", model$best_iter))
+cat(sprintf("Best AUC (test): %.4f\n", model$best_score))
 
 # ── 9. Evaluate ───────────────────────────────────────────────────────────────
-probs     <- predict(model, X_test)
-predicted <- as.integer(probs >= 0.5)
+probs <- predict(model, X_test)
+preds <- as.integer(probs >= 0.5)
 
-accuracy  <- mean(predicted == y_test)
-tp        <- sum(predicted == 1 & y_test == 1)
-fp        <- sum(predicted == 1 & y_test == 0)
-tn        <- sum(predicted == 0 & y_test == 0)
-fn        <- sum(predicted == 0 & y_test == 1)
+tp <- sum(preds == 1 & y_test == 1)
+fp <- sum(preds == 1 & y_test == 0)
+tn <- sum(preds == 0 & y_test == 0)
+fn <- sum(preds == 0 & y_test == 1)
+
 precision <- tp / (tp + fp)
 recall    <- tp / (tp + fn)
 f1        <- 2 * precision * recall / (precision + recall)
 
-cat("\n── Metrics ─────────────────────────────────────────\n")
-cat(sprintf("  Accuracy  : %.4f\n", accuracy))
+cat("\n── Metrics ──────────────────────────────────────────\n")
+cat(sprintf("  Accuracy  : %.4f\n", mean(preds == y_test)))
 cat(sprintf("  Precision : %.4f\n", precision))
 cat(sprintf("  Recall    : %.4f\n", recall))
 cat(sprintf("  F1        : %.4f\n", f1))
@@ -108,6 +103,21 @@ imp <- lgb.importance(model, percentage = TRUE)
 cat("\n── Feature Importance (top 10) ──────────────────────\n")
 print(head(imp, 10))
 
-# ── 11. Save model ────────────────────────────────────────────────────────────
+# ── 11. Save ──────────────────────────────────────────────────────────────────
 lgb.save(model, "adult_model.txt")
 cat("\nSaved: adult_model.txt\n")
+
+# ── 12. Sanity check ──────────────────────────────────────────────────────────
+lines     <- readLines("adult_model.txt")
+info_line <- lines[grep("^feature_infos", lines)]
+feature_infos <- strsplit(info_line, " ")[[1]]
+
+cat("\n── feature_infos per column ─────────────────────────\n")
+for (i in seq_along(feature_cols)) {
+  info    <- feature_infos[i]
+  is_cont <- startsWith(info, "[")
+  cat(sprintf("  %-20s : %s  %s\n",
+              feature_cols[i],
+              ifelse(is_cont, "continuous ✓", "categorical ✓"),
+              substr(info, 1, 30)))
+}
