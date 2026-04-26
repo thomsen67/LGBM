@@ -121,3 +121,39 @@ for (i in seq_along(feature_cols)) {
               ifelse(is_cont, "continuous ✓", "categorical ✓"),
               substr(info, 1, 30)))
 }
+
+
+# ==============================================
+
+# 1. Create the same sample vector used in C#
+# These must match the exact 0-based integer encoding from your training
+sample_data <- c(
+  39,         # age
+  6,          # workclass (e.g., 'Private' might have mapped to 6)
+  77516,      # fnlwgt
+  9,          # education
+  13,         # education_num
+  4,          # marital_status
+  1,          # occupation
+  1,          # relationship
+  4,          # race
+  1,          # sex
+  2174,       # capital_gain
+  0,          # capital_loss
+  40,         # hours_per_week
+  38          # native_country
+)
+
+# 2. Convert to a 1-row matrix (LightGBM predicts on matrices)
+sample_matrix <- matrix(sample_data, nrow = 1)
+colnames(sample_matrix) <- feature_cols
+
+# 3. Get the Probability (Sigmoid output)
+prob <- predict(model, sample_matrix)
+
+# 4. Get the Raw Score (Logit/Leaf Sum)
+# This is what C#'s GetOutput() returns before the sigmoid
+#raw_score <- predict(model, sample_matrix, raw = TRUE)
+#cat("--- R Prediction Results ---\n")
+#at(sprintf("Raw Score (Logit): %f\n", raw_score))
+cat(sprintf("Probability      : %f\n", prob))
